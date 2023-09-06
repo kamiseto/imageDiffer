@@ -119,9 +119,99 @@ func calcStartEndVal(i, size, procs int) (start, end int) {
 	return
 }
 
+// メイン関数
+func main() {
+	//画像を読み込む
+	flag.Parse()
+	args := flag.Args()
+
+	//-hオプションがある場合はヘルプを表示
+	if len(args) == 1 && args[0] == "-h" {
+		fmt.Println("Usage: imageDiffer [options] file1 file2")
+		fmt.Println("Options:")
+		fmt.Println("  -h, --help")
+		fmt.Println("  -v, --version")
+		os.Exit(0)
+	}
+	//-vオプションがある場合はバージョンを表示
+	if len(args) == 1 && args[0] == "-v" {
+		fmt.Println("imageDiffer version 1.0.0")
+		os.Exit(0)
+	}
+
+
+	if len(args) < 2 {
+		fmt.Println("画像ファイルを2つ指定してください")
+		os.Exit(1)
+	}
+	//argsを2つづつ処理
+	for i := 0; i < len(args); i += 2 {
+		if len(args) == i+1 {
+			fmt.Println("画像ファイルを2つ指定してください")
+			os.Exit(1)
+		}
+		main2(args[i], args[i+1])
+	}
+}
+
+//処理をまとめた関数
+func main2(arg1 string, arg2 string) {
+
+	img1, ext1 := readImage(arg1)
+	img2, ext2 := readImage(arg2)
+
+	//画像の情報を表示
+	ImageInfo(img1, ext1, arg1)
+	ImageInfo(img2, ext2, arg2)
+	//画像のサイズを取得
+	bounds1 := img1.Bounds()
+	width1 := bounds1.Max.X
+	height1 := bounds1.Max.Y
+
+	bounds2 := img2.Bounds()
+	width2 := bounds2.Max.X
+	height2 := bounds2.Max.Y
+
+	//画像のサイズが違う場合はエラー
+	if width1 != width2 || height1 != height2 {
+		fmt.Println("画像のサイズが違います")
+		os.Exit(1)
+	}
+
+	//img1のカラーがYCbCrの場合はRGBAに変換
+	if img1.ColorModel() == color.YCbCrModel {
+		img3 := image.NewRGBA(image.Rect(0, 0, width1, height1))
+		draw.Draw(img3, img3.Bounds(), img1, bounds1.Min, draw.Src)
+		img1 = img3
+	}
+	//img2のカラーがYCbCrの場合はRGBAに変換
+	if img2.ColorModel() == color.YCbCrModel {
+		img4 := image.NewRGBA(image.Rect(0, 0, width2, height2))
+		draw.Draw(img4, img4.Bounds(), img2, bounds2.Min, draw.Src)
+		img2 = img4
+	}
+
+	//画像の色が違う場合はエラー
+	if img1.ColorModel() != img2.ColorModel() {
+		fmt.Println("画像の色が違います")
+		os.Exit(1)
+	}
+	switch img1.ColorModel() {
+	case color.RGBAModel, color.RGBA64Model, color.NRGBAModel, color.NRGBA64Model:
+	SaveImage(Case_RGBA(img1, img2, ext1, ext2), ext1, arg1)
+	case color.CMYKModel:
+	SaveImage(Case_CMYK(img1, img2, ext1, ext2), ext1, arg1)
+	case color.GrayModel, color.Gray16Model:
+	SaveImage(Case_Gray(img1, img2, ext1, ext2), ext1, arg1)
+	default:
+		fmt.Println("対応していない画像形式です")
+		os.Exit(1)
+	}
+}
+
 // 画像の保存
 func SaveImage(img image.Image, ext1 string, imgname string) {
-	out, err := os.Create(imgname)
+	out, err := os.Create(imgname + "_diff" + ext1)
 	if err != nil {
 		fmt.Println("ファイルが作成できませんでした")
 		os.Exit(1)
@@ -155,27 +245,32 @@ func ImageInfo(img image.Image, ext1 string, imgname string) {
 }
 
 // RGBA画像の場合
-func Case_RGBA(img1 image.Image, ext1 string) image.Image {
-	fmt.Println("Case_RGBA")
+func Case_RGBA(img1 image.Image, img2 image.Image, ext1 string, ext2 string) image.Image {
 	//画像のサイズを取得
 	bounds1 := img1.Bounds()
 	width1 := bounds1.Max.X
 	height1 := bounds1.Max.Y
 
 	//差分画像のサイズを指定
-	diffimg := image.NewRGBA(image.Rect(0, 0, width1, height1))
+	diffimg := image.NewGray(image.Rect(0, 0, width1, height1))
 
 	//差分画像を作成
 	ParallelForEachPixel(image.Point{width1, height1}, func(x, y int) {
 		//画像の色を取得
 		r1, g1, b1, a1 := img1.At(x, y).RGBA()
-		diffimg.Set(x, y, color.RGBA{uint8(g1), uint8(b1), uint8(r1), uint8(a1)})
+		r2, g2, b2, a2 := img2.At(x, y).RGBA()
+		//画像の色が違う場合は赤色にする
+		if r1 != r2 || g1 != g2 || b1 != b2 || a1 != a2 {
+			diffimg.Set(x, y, color.Gray{0})
+		} else {
+			diffimg.Set(x, y, color.Gray{255})
+		}
 	})
 	return diffimg
 }
 
-// CMYK画像の場合
-func Case_CMYK(img1 image.Image, ext1 string) image.Image {
+//CMYK画像の場合
+func Case_CMYK(img1 image.Image, img2 image.Image, ext1 string, ext2 string) image.Image {
 	fmt.Println("Case_CMYK")
 	//画像のサイズを取得
 	bounds1 := img1.Bounds()
@@ -183,97 +278,52 @@ func Case_CMYK(img1 image.Image, ext1 string) image.Image {
 	height1 := bounds1.Max.Y
 
 	//差分画像のサイズを指定
-	diffimg := image.NewCMYK(image.Rect(0, 0, width1, height1))
+	diffimg := image.NewGray(image.Rect(0, 0, width1, height1))
 
 	//差分画像を作成
 	ParallelForEachPixel(image.Point{width1, height1}, func(x, y int) {
 		//画像の色を取得
 		c1, m1, y1, k1 := img1.At(x, y).RGBA()
-		c1 = 255 - c1
-		m1 = 255 - m1
-		y1 = 255 - y1
-		k1 = 255 - k1
-		diffimg.Set(x, y, color.CMYK{uint8(k1), uint8(c1), uint8(m1), uint8(y1)})
+		c2, m2, y2, k2 := img2.At(x, y).RGBA()
+		//画像の色が違う場合は赤色にする
+		if c1 != c2 || m1 != m2 || y1 != y2 || k1 != k2 {
+			diffimg.Set(x, y, color.Gray{0})
+		} else {
+			diffimg.Set(x, y, color.Gray{255})
+		}
 	})
 	return diffimg
 }
 
 // Gray画像の場合
-func Case_Gray(img1 image.Image, ext1 string) image.Image {
-	fmt.Println("Case_Gray")
+func Case_Gray(img1 image.Image, img2 image.Image, ext1 string, ext2 string) image.Image {
 	//画像のサイズを取得
 	bounds1 := img1.Bounds()
 	width1 := bounds1.Max.X
 	height1 := bounds1.Max.Y
 
 	//差分画像のサイズを指定
-	diffimg := image.NewCMYK(image.Rect(0, 0, width1, height1))
+	diffimg := image.NewGray(image.Rect(0, 0, width1, height1))
 
 	//差分画像を作成
 	ParallelForEachPixel(image.Point{width1, height1}, func(x, y int) {
 		//画像の色を取得
 		r1, _, _, _ := img1.At(x, y).RGBA()
-		//色を反転
-		r1 = 255 - r1
-		diffimg.Set(x, y, color.CMYK{uint8(r1), 0, 0, 0})
+		r2, _, _, _ := img2.At(x, y).RGBA()
+		//画像の色が違う場合は赤色にする
+		if r1 != r2 {
+			diffimg.Set(x, y, color.Gray{0})
+		} else {
+			diffimg.Set(x, y, color.Gray{255})
+		}
 	})
 	return diffimg
 }
 
-// メイン関数
-func main() {
-	//画像を読み込む
-	flag.Parse()
-	args := flag.Args()
-
-	//-hオプションがある場合はヘルプを表示
-	if len(args) == 1 && args[0] == "-h" {
-		fmt.Println("Usage: imageDiffer [options] file1 file2")
-		fmt.Println("Options:")
-		fmt.Println("  -h, --help")
-		fmt.Println("  -v, --version")
-		os.Exit(0)
-	}
-	//-vオプションがある場合はバージョンを表示
-	if len(args) == 1 && args[0] == "-v" {
-		fmt.Println("imageDiffer version 1.0.0")
-		os.Exit(0)
-	}
-
-	//argsを2つづつ処理
-	for i := 0; i < len(args); i += 1 {
-		main2(args[i])
-	}
-}
-
-// 処理をまとめた関数
-func main2(arg1 string) {
-
-	img1, ext1 := readImage(arg1)
-
-	//画像の情報を表示
-	ImageInfo(img1, ext1, arg1)
-	//画像のサイズを取得
-	bounds1 := img1.Bounds()
-	width1 := bounds1.Max.X
-	height1 := bounds1.Max.Y
-
-	//img1のカラーがYCbCrの場合はRGBAに変換
-	if img1.ColorModel() == color.YCbCrModel {
-		img3 := image.NewRGBA(image.Rect(0, 0, width1, height1))
-		draw.Draw(img3, img3.Bounds(), img1, bounds1.Min, draw.Src)
-		img1 = img3
-	}
-
-	switch img1.ColorModel() {
-	case color.RGBAModel, color.RGBA64Model, color.NRGBAModel, color.NRGBA64Model:
-		SaveImage(Case_RGBA(img1, ext1), ext1, arg1)
-	case color.CMYKModel:
-		SaveImage(Case_CMYK(img1, ext1), ext1, arg1)
-	case color.GrayModel, color.Gray16Model:
-		SaveImage(Case_Gray(img1, ext1), ext1, arg1)
-	default:
-		fmt.Println("対応していない画像形式です")
-		os.Exit(1)
-	}
-}
+//wasm sample.js
+//go build -o sample.wasm -tags=js
+//javascript
+//const go = new Go();
+//WebAssembly.instantiateStreaming(fetch("sample.wasm"), go.importObject).then((result) => {
+//  go.run(result.instance);
+//});
